@@ -1,90 +1,90 @@
 import json
-from tree_sitter import Language, Parser
-
-# Load your language grammar and create a parser
-Language.build_library(
-  'build/tree_sitter_js.so',
-  ['./tree-sitter-javascript']
-)
-
-JS_LANGUAGE = Language('build/tree_sitter_js.so', 'javascript')
-parser = Parser()
-parser.set_language(JS_LANGUAGE)
+import esprima
+import re
 
 def parse_javascript_function_call(source_code):
-    # Parse the source code
-    tree = parser.parse(bytes(source_code, "utf8"))
-    root_node = tree.root_node
-    sexp_result = root_node.sexp()
-    if "ERROR" in sexp_result:
+    """
+    Parses the given JavaScript function call code and extracts information about function calls.
+
+    Args:
+        source_code (str): The JavaScript source code to parse.
+
+    Returns:
+        dict: A dictionary containing information about the function call, including the function name and its parameters.
+              If there is an error during parsing, None is returned.
+    """
+    try:
+        # Parse the JavaScript code
+        parsed = esprima.parseScript(source_code)
+        
+        # Get the first expression statement (typically contains the function call)
+        if (len(parsed.body) > 0 and 
+            hasattr(parsed.body[0], 'type') and 
+            parsed.body[0].type == 'ExpressionStatement'):
+            
+            expression = parsed.body[0].expression
+            
+            # Check if it's a function call
+            if hasattr(expression, 'type') and expression.type == 'CallExpression':
+                # Extract the function name
+                if hasattr(expression.callee, 'name'):
+                    function_name = expression.callee.name
+                elif hasattr(expression.callee, 'property') and hasattr(expression.callee.property, 'name'):
+                    # Handle object method calls like object.method()
+                    obj_name = ''
+                    if hasattr(expression.callee.object, 'name'):
+                        obj_name = expression.callee.object.name
+                    elif hasattr(expression.callee.object, 'type') and expression.callee.object.type == 'CallExpression':
+                        # Handle chained calls like document.getElementById().method()
+                        if hasattr(expression.callee.object.callee, 'property'):
+                            obj_name = f"{expression.callee.object.callee.object.name}.{expression.callee.object.callee.property.name}()"
+                    function_name = f"{obj_name}.{expression.callee.property.name}" if obj_name else expression.callee.property.name
+                else:
+                    # Handle other cases or return a placeholder
+                    function_name = "unknown_function"
+                
+                # Since esprima doesn't directly support named parameters in the same way as your original code,
+                # we'll use regex to extract named parameters from the original source
+                # This is similar to the approach used in the Java parser
+                
+                parameters = {}
+                
+                # Extract named parameters using regex
+                named_params_pattern = r'(\w+)\s*=\s*([^,\)]+)'
+                named_params = re.findall(named_params_pattern, source_code)
+                
+                for name, value in named_params:
+                    value = value.strip()
+                    parameters[name] = value
+                
+                # Handle unnamed parameters
+                if not parameters and hasattr(expression, 'arguments') and expression.arguments:
+                    unnamed_args = []
+                    for arg in expression.arguments:
+                        if hasattr(arg, 'value') and arg.value is not None:
+                            unnamed_args.append(str(arg.value))
+                        elif hasattr(arg, 'name'):
+                            unnamed_args.append(arg.name)
+                    
+                    if unnamed_args:
+                        parameters[None] = unnamed_args
+                
+                return {
+                    "function": {
+                        "name": function_name,
+                        "parameters": parameters
+                    }
+                }
+        
         return None
-    # Function to recursively extract argument details
-    def extract_arguments(node):
-        args = {}
-        for child in node.children:
-            if child.type == 'assignment_expression':
-                # Extract left (name) and right (value) parts of the assignment
-                name = child.children[0].text.decode('utf-8')
-                value = child.children[2].text.decode('utf-8')
-                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                    value = value[1:-1]  # Trim the quotation marks
-                if name in args:
-                    if not isinstance(args[name], list):
-                        args[name] = [args[name]]
-                    args[name].append(value)
-                else:
-                    args[name] = value
-
-            elif child.type == 'identifier' or child.type == 'true':
-                # Handle non-named arguments and boolean values
-                value = child.text.decode('utf-8')
-                if None in args:
-                    if not isinstance(args[None], list):
-                        args[None] = [args[None]]
-                    args[None].append(value)
-                else:
-                    args[None] = value
-        return args
-
-    # Find the function call and extract its name and arguments
-    if root_node.type == 'program':
-        for child in root_node.children:
-            if child.type == 'expression_statement':
-                for sub_child in child.children:
-                    if sub_child.type == 'call_expression':
-                        function_name = sub_child.children[0].text.decode('utf8')
-                        arguments_node = sub_child.children[1]
-                        parameters = extract_arguments(arguments_node)
-                        result = {
-                            'function': {
-                                'name': function_name,
-                                'parameters': parameters
-                            }
-                        }
-                        return result
+    
+    except Exception as e:
+        print(f"Error parsing JavaScript code: {e}")
+        return None
 
 # Example usage
 if __name__ == "__main__":
-    # Assuming parser setup and language loading are done earlier
-    
     source_code = """markdownRenderComplete(elem=document.getElementById('contentArea'), rendered=true, array=[1,2,3], array2=new Array(1,2,3), dictionary={'key':'value'})"""
-    
-    # Expected output:
-    """
-    {
-        "function": {
-            "name": "markdownRenderComplete",
-            "parameters": {
-            "elem": "document.getElementById('contentArea')",
-            "rendered": "true",
-            "array": "[1,2,3]",
-            "array2": "new Array(1,2,3)",
-            "dictionary": "{'key':'value'}"
-            }
-        }
-    }
-    """
-    
     
     result = parse_javascript_function_call(source_code)
     print(source_code)

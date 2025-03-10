@@ -180,6 +180,10 @@ Install the dependencies with:
 pip3 install tree_sitter
 git clone https://github.com/tree-sitter/tree-sitter-java.git
 git clone https://github.com/tree-sitter/tree-sitter-javascript.git
+
+!pip install 'accelerate>=0.26.0'
+!pip install esprima
+!pip install javalang
 ```
 
 Please `git clone` and run example code under current `openfunctions` directory!
